@@ -8,7 +8,7 @@ TIME_ZONES = {
     '1': 'Asia/Shanghai',  # 上海时区/北京时区（与上海时区相同）
     '2': 'America/Los_Angeles',  # 美西时区
     '3': 'Asia/Riyadh',  # 沙特阿拉伯时区
-    '4': 'Europe/Madrid' # 西班牙马德里时区
+    '4': 'Europe/Madrid'  # 西班牙马德里时区
 }
 
 
@@ -52,7 +52,7 @@ def main():
     if not args.mode and not args.value and not args.timezone:
         # 如果没有传入任何参数，返回当前时间戳（毫秒级）
         # print('Current Timestamp (ms):', int(time.time() * 1000))
-        print(int(time.time() * 1000))
+        print(int(time.time() * 1000), end='')
         return
 
     if not args.mode or not args.value or not args.timezone:
@@ -67,7 +67,7 @@ def main():
         try:
             timestamp = float(args.value.strip())
             converted_value = timestamp_to_date(timestamp, timezone_str)
-            print(converted_value)
+            print(converted_value, end='')
         except ValueError:
             print('Error: Invalid timestamp value')
     elif args.mode == 'to_timestamp':
@@ -75,7 +75,7 @@ def main():
         try:
             date_str = args.value.strip()
             converted_value = date_to_timestamp(date_str, timezone_str)
-            print(converted_value)
+            print(converted_value, end='')
         except ValueError:
             print('Error: Invalid date string format. Use YYYY-MM-DD HH:MM:SS')
 
