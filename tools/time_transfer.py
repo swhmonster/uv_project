@@ -27,14 +27,61 @@ TIME_ZONES: Dict[str, Dict[str, str]] = {
 
 # 支持的日期格式
 DATE_FORMATS = [
-    '%Y-%m-%d %H:%M:%S %Z',    # 带时区缩写的格式，如：2023-10-11 12:34:56 CST
-    '%Y-%m-%d %H:%M:%S %z',    # 带时区偏移的格式，如：2023-10-11 12:34:56 +0800
-    '%Y-%m-%d %H:%M:%S',
-    '%Y/%m/%d %H:%M:%S',
-    '%Y-%m-%d %H:%M',
-    '%Y/%m/%d %H:%M',
-    '%Y-%m-%d',
-    '%Y/%m/%d'
+    # 带时区信息的格式
+    '%Y-%m-%d %H:%M:%S %Z',    # 2023-10-11 12:34:56 CST
+    '%Y-%m-%d %H:%M:%S %z',    # 2023-10-11 12:34:56 +0800
+    '%Y/%m/%d %H:%M:%S %Z',    # 2023/10/11 12:34:56 CST
+    '%Y/%m/%d %H:%M:%S %z',    # 2023/10/11 12:34:56 +0800
+
+    # ISO 8601 格式
+    '%Y-%m-%dT%H:%M:%S',       # 2023-10-11T12:34:56
+    '%Y-%m-%dT%H:%M:%SZ',      # 2023-10-11T12:34:56Z
+    '%Y-%m-%dT%H:%M:%S.%f',    # 2023-10-11T12:34:56.123456
+    '%Y-%m-%dT%H:%M:%S.%fZ',   # 2023-10-11T12:34:56.123456Z
+
+    # 标准格式 (YYYY-MM-DD)
+    '%Y-%m-%d %H:%M:%S',       # 2023-10-11 12:34:56
+    '%Y-%m-%d %H:%M',          # 2023-10-11 12:34
+    '%Y-%m-%d',                # 2023-10-11
+
+    # 斜杠分隔格式 (YYYY/MM/DD)
+    '%Y/%m/%d %H:%M:%S',       # 2023/10/11 12:34:56
+    '%Y/%m/%d %H:%M',          # 2023/10/11 12:34
+    '%Y/%m/%d',                # 2023/10/11
+
+    # 美式格式 (MM/DD/YYYY)
+    '%m/%d/%Y %H:%M:%S',       # 10/11/2023 12:34:56
+    '%m/%d/%Y %H:%M',          # 10/11/2023 12:34
+    '%m/%d/%Y',                # 10/11/2023
+
+    # 欧式格式 (DD/MM/YYYY)
+    '%d/%m/%Y %H:%M:%S',       # 11/10/2023 12:34:56
+    '%d/%m/%Y %H:%M',          # 11/10/2023 12:34
+    '%d/%m/%Y',                # 11/10/2023
+
+    # 点号分隔格式
+    '%Y.%m.%d %H:%M:%S',       # 2023.10.11 12:34:56
+    '%Y.%m.%d %H:%M',          # 2023.10.11 12:34
+    '%Y.%m.%d',                # 2023.10.11
+    '%d.%m.%Y %H:%M:%S',       # 11.10.2023 12:34:56
+    '%d.%m.%Y %H:%M',          # 11.10.2023 12:34
+    '%d.%m.%Y',                # 11.10.2023
+
+    # 中文格式
+    '%Y年%m月%d日 %H:%M:%S',    # 2023年10月11日 12:34:56
+    '%Y年%m月%d日 %H:%M',       # 2023年10月11日 12:34
+    '%Y年%m月%d日',             # 2023年10月11日
+
+    # 12小时制格式
+    '%Y-%m-%d %I:%M:%S %p',    # 2023-10-11 12:34:56 PM
+    '%Y-%m-%d %I:%M %p',       # 2023-10-11 12:34 PM
+    '%m/%d/%Y %I:%M:%S %p',    # 10/11/2023 12:34:56 PM
+    '%m/%d/%Y %I:%M %p',       # 10/11/2023 12:34 PM
+
+    # 紧凑格式
+    '%Y%m%d%H%M%S',            # 20231011123456
+    '%Y%m%d%H%M',              # 202310111234
+    '%Y%m%d',                  # 20231011
 ]
 
 def validate_timestamp(timestamp_str: str) -> float:
@@ -61,19 +108,26 @@ def parse_date_string(date_str: str) -> Tuple[datetime.datetime, str]:
     # 因为 Python 的 strptime 对时区缩写支持有限
     import re
 
-    # 匹配 "YYYY-MM-DD HH:MM:SS TZ" 格式
-    tz_pattern = r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+([A-Z]{3,4})$'
-    match = re.match(tz_pattern, date_str)
-    if match:
-        date_part, tz_abbr = match.groups()
-        try:
-            parsed_dt = datetime.datetime.strptime(date_part, '%Y-%m-%d %H:%M:%S')
-            return parsed_dt, tz_abbr
-        except ValueError:
-            pass
+    # 匹配 "YYYY-MM-DD HH:MM:SS TZ" 和 "YYYY/MM/DD HH:MM:SS TZ" 格式
+    tz_patterns = [
+        r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+([A-Z]{3,4})$',  # YYYY-MM-DD HH:MM:SS TZ
+        r'^(\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2})\s+([A-Z]{3,4})$',  # YYYY/MM/DD HH:MM:SS TZ
+    ]
+
+    for pattern in tz_patterns:
+        match = re.match(pattern, date_str)
+        if match:
+            date_part, tz_abbr = match.groups()
+            try:
+                # 根据分隔符选择对应的格式
+                fmt = '%Y-%m-%d %H:%M:%S' if '-' in date_part else '%Y/%m/%d %H:%M:%S'
+                parsed_dt = datetime.datetime.strptime(date_part, fmt)
+                return parsed_dt, tz_abbr
+            except ValueError:
+                continue
 
     # 然后尝试解析带时区偏移的格式
-    for fmt in ['%Y-%m-%d %H:%M:%S %z']:
+    for fmt in ['%Y-%m-%d %H:%M:%S %z', '%Y/%m/%d %H:%M:%S %z']:
         try:
             parsed_dt = datetime.datetime.strptime(date_str, fmt)
             return parsed_dt.replace(tzinfo=None), str(parsed_dt.tzinfo)
@@ -81,7 +135,7 @@ def parse_date_string(date_str: str) -> Tuple[datetime.datetime, str]:
             continue
 
     # 最后尝试不带时区信息的格式
-    for fmt in DATE_FORMATS[2:]:  # 跳过前两个带时区的格式
+    for fmt in DATE_FORMATS[4:]:  # 跳过前4个带时区的格式
         try:
             parsed_dt = datetime.datetime.strptime(date_str, fmt)
             return parsed_dt, None
