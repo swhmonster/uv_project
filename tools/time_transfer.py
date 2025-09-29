@@ -57,23 +57,30 @@ def parse_date_string(date_str: str) -> Tuple[datetime.datetime, str]:
     """
     date_str = date_str.strip()
 
-    # 首先尝试解析带时区信息的格式
-    for fmt in ['%Y-%m-%d %H:%M:%S %Z', '%Y-%m-%d %H:%M:%S %z']:
+    # 首先尝试手动解析带时区缩写的格式
+    # 因为 Python 的 strptime 对时区缩写支持有限
+    import re
+
+    # 匹配 "YYYY-MM-DD HH:MM:SS TZ" 格式
+    tz_pattern = r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+([A-Z]{3,4})$'
+    match = re.match(tz_pattern, date_str)
+    if match:
+        date_part, tz_abbr = match.groups()
+        try:
+            parsed_dt = datetime.datetime.strptime(date_part, '%Y-%m-%d %H:%M:%S')
+            return parsed_dt, tz_abbr
+        except ValueError:
+            pass
+
+    # 然后尝试解析带时区偏移的格式
+    for fmt in ['%Y-%m-%d %H:%M:%S %z']:
         try:
             parsed_dt = datetime.datetime.strptime(date_str, fmt)
-            if fmt == '%Y-%m-%d %H:%M:%S %Z':
-                # 如果是时区缩写格式，需要提取时区信息
-                parts = date_str.split()
-                if len(parts) >= 3:
-                    tz_abbr = parts[-1]
-                    return parsed_dt.replace(tzinfo=None), tz_abbr
-            elif fmt == '%Y-%m-%d %H:%M:%S %z':
-                # 如果是时区偏移格式，直接返回
-                return parsed_dt.replace(tzinfo=None), str(parsed_dt.tzinfo)
+            return parsed_dt.replace(tzinfo=None), str(parsed_dt.tzinfo)
         except ValueError:
             continue
 
-    # 然后尝试不带时区信息的格式
+    # 最后尝试不带时区信息的格式
     for fmt in DATE_FORMATS[2:]:  # 跳过前两个带时区的格式
         try:
             parsed_dt = datetime.datetime.strptime(date_str, fmt)
