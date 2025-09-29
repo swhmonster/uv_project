@@ -11,7 +11,7 @@ import datetime
 import pytz
 import time
 import sys
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 # 定义时区映射
 TIME_ZONES: Dict[str, Dict[str, str]] = {
@@ -27,6 +27,8 @@ TIME_ZONES: Dict[str, Dict[str, str]] = {
 
 # 支持的日期格式
 DATE_FORMATS = [
+    '%Y-%m-%d %H:%M:%S %Z',    # 带时区缩写的格式，如：2023-10-11 12:34:56 CST
+    '%Y-%m-%d %H:%M:%S %z',    # 带时区偏移的格式，如：2023-10-11 12:34:56 +0800
     '%Y-%m-%d %H:%M:%S',
     '%Y/%m/%d %H:%M:%S',
     '%Y-%m-%d %H:%M',
@@ -46,39 +48,99 @@ def validate_timestamp(timestamp_str: str) -> float:
     except ValueError as e:
         raise ValueError(f"无效的时间戳格式: {e}")
 
-def parse_date_string(date_str: str) -> datetime.datetime:
-    """尝试解析多种日期格式"""
+def parse_date_string(date_str: str) -> Tuple[datetime.datetime, str]:
+    """
+    尝试解析多种日期格式
+
+    Returns:
+        tuple: (解析后的datetime对象, 检测到的时区信息或None)
+    """
     date_str = date_str.strip()
-    
-    for fmt in DATE_FORMATS:
+
+    # 首先尝试解析带时区信息的格式
+    for fmt in ['%Y-%m-%d %H:%M:%S %Z', '%Y-%m-%d %H:%M:%S %z']:
         try:
-            return datetime.datetime.strptime(date_str, fmt)
+            parsed_dt = datetime.datetime.strptime(date_str, fmt)
+            if fmt == '%Y-%m-%d %H:%M:%S %Z':
+                # 如果是时区缩写格式，需要提取时区信息
+                parts = date_str.split()
+                if len(parts) >= 3:
+                    tz_abbr = parts[-1]
+                    return parsed_dt.replace(tzinfo=None), tz_abbr
+            elif fmt == '%Y-%m-%d %H:%M:%S %z':
+                # 如果是时区偏移格式，直接返回
+                return parsed_dt.replace(tzinfo=None), str(parsed_dt.tzinfo)
         except ValueError:
             continue
-    
+
+    # 然后尝试不带时区信息的格式
+    for fmt in DATE_FORMATS[2:]:  # 跳过前两个带时区的格式
+        try:
+            parsed_dt = datetime.datetime.strptime(date_str, fmt)
+            return parsed_dt, None
+        except ValueError:
+            continue
+
     raise ValueError(f"无法解析日期格式，支持的格式: {', '.join(DATE_FORMATS)}")
+
+def detect_timezone_from_abbr(tz_abbr: str, target_timezone_str: str) -> str:
+    """
+    根据时区缩写和目标时区推断实际时区
+
+    Args:
+        tz_abbr: 时区缩写，如 CST, PST 等
+        target_timezone_str: 目标时区字符串
+
+    Returns:
+        推断的时区字符串
+    """
+    # 常见时区缩写映射
+    tz_abbr_map = {
+        'CST': ['Asia/Shanghai', 'America/Chicago'],  # 中国标准时间或美国中部时间
+        'PST': ['America/Los_Angeles'],
+        'PDT': ['America/Los_Angeles'],
+        'EST': ['America/New_York'],
+        'EDT': ['America/New_York'],
+        'JST': ['Asia/Tokyo'],
+        'UTC': ['UTC'],
+        'GMT': ['UTC'],
+        'CET': ['Europe/Madrid'],
+        'CEST': ['Europe/Madrid'],
+        'AST': ['Asia/Riyadh'],
+    }
+
+    if tz_abbr in tz_abbr_map:
+        possible_timezones = tz_abbr_map[tz_abbr]
+        # 如果目标时区在可能的时区列表中，优先使用目标时区
+        if target_timezone_str in possible_timezones:
+            return target_timezone_str
+        # 否则使用第一个匹配的时区
+        return possible_timezones[0]
+
+    # 如果无法识别时区缩写，使用目标时区
+    return target_timezone_str
 
 def timestamp_to_date(timestamp: float, timezone_str: str) -> str:
     """
     将时间戳转换为指定时区的日期字符串
-    
+
     Args:
         timestamp: 毫秒级时间戳
         timezone_str: 时区字符串
-    
+
     Returns:
         格式化的日期字符串
     """
     try:
         # 将时间戳转换为UTC时间
         utc_time = datetime.datetime.utcfromtimestamp(timestamp / 1000).replace(tzinfo=pytz.utc)
-        
+
         # 获取目标时区
         target_timezone = pytz.timezone(timezone_str)
-        
+
         # 将UTC时间转换为目标时区时间
         target_time = utc_time.astimezone(target_timezone)
-        
+
         return target_time.strftime('%Y-%m-%d %H:%M:%S %Z')
     except Exception as e:
         raise ValueError(f"时间戳转换失败: {e}")
@@ -86,23 +148,30 @@ def timestamp_to_date(timestamp: float, timezone_str: str) -> str:
 def date_to_timestamp(date_str: str, timezone_str: str) -> int:
     """
     将日期字符串转换为毫秒级时间戳
-    
+
     Args:
         date_str: 日期字符串
         timezone_str: 时区字符串
-    
+
     Returns:
         毫秒级时间戳
     """
     try:
         # 获取目标时区
         target_timezone = pytz.timezone(timezone_str)
-        
+
         # 解析日期字符串
-        target_time = parse_date_string(date_str)
-        
-        # 本地化到目标时区
-        target_time = target_timezone.localize(target_time)
+        target_time, detected_tz_abbr = parse_date_string(date_str)
+
+        # 如果检测到时区缩写，根据目标时区推断实际时区
+        if detected_tz_abbr:
+            actual_timezone_str = detect_timezone_from_abbr(detected_tz_abbr, timezone_str)
+            actual_timezone = pytz.timezone(actual_timezone_str)
+            # 使用检测到的时区进行本地化
+            target_time = actual_timezone.localize(target_time)
+        else:
+            # 没有检测到时区信息，使用指定的目标时区
+            target_time = target_timezone.localize(target_time)
         
         # 转换为UTC时间戳并返回毫秒级时间戳
         timestamp = int(target_time.astimezone(pytz.utc).timestamp() * 1000)
