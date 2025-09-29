@@ -11,7 +11,8 @@ import datetime
 import pytz
 import time
 import sys
-from typing import Dict, Optional, Tuple
+import re
+from typing import Dict, Optional, Tuple, List
 
 # 定义时区映射
 TIME_ZONES: Dict[str, Dict[str, str]] = {
@@ -25,36 +26,42 @@ TIME_ZONES: Dict[str, Dict[str, str]] = {
     '8': {'tz': 'Europe/London', 'name': '伦敦时区 (UTC+0/+1)'}
 }
 
-# 支持的日期格式
+# 优化：按使用频率排序的日期格式，常用格式放前面以提高解析性能
 DATE_FORMATS = [
+    # 最常用的标准格式
+    '%Y-%m-%d %H:%M:%S',       # 2023-10-11 12:34:56
+    '%Y-%m-%d %H:%M',          # 2023-10-11 12:34
+    '%Y-%m-%d',                # 2023-10-11
+
+    # ISO 8601 格式（国际标准）
+    '%Y-%m-%dT%H:%M:%S',       # 2023-10-11T12:34:56
+    '%Y-%m-%dT%H:%M:%SZ',      # 2023-10-11T12:34:56Z
+    '%Y-%m-%dT%H:%M:%S.%f',    # 2023-10-11T12:34:56.123456
+    '%Y-%m-%dT%H:%M:%S.%fZ',   # 2023-10-11T12:34:56.123456Z
+
     # 带时区信息的格式
     '%Y-%m-%d %H:%M:%S %Z',    # 2023-10-11 12:34:56 CST
     '%Y-%m-%d %H:%M:%S %z',    # 2023-10-11 12:34:56 +0800
     '%Y/%m/%d %H:%M:%S %Z',    # 2023/10/11 12:34:56 CST
     '%Y/%m/%d %H:%M:%S %z',    # 2023/10/11 12:34:56 +0800
 
-    # ISO 8601 格式
-    '%Y-%m-%dT%H:%M:%S',       # 2023-10-11T12:34:56
-    '%Y-%m-%dT%H:%M:%SZ',      # 2023-10-11T12:34:56Z
-    '%Y-%m-%dT%H:%M:%S.%f',    # 2023-10-11T12:34:56.123456
-    '%Y-%m-%dT%H:%M:%S.%fZ',   # 2023-10-11T12:34:56.123456Z
-
-    # 标准格式 (YYYY-MM-DD)
-    '%Y-%m-%d %H:%M:%S',       # 2023-10-11 12:34:56
-    '%Y-%m-%d %H:%M',          # 2023-10-11 12:34
-    '%Y-%m-%d',                # 2023-10-11
-
-    # 斜杠分隔格式 (YYYY/MM/DD)
+    # 斜杠分隔格式
     '%Y/%m/%d %H:%M:%S',       # 2023/10/11 12:34:56
     '%Y/%m/%d %H:%M',          # 2023/10/11 12:34
     '%Y/%m/%d',                # 2023/10/11
 
-    # 美式格式 (MM/DD/YYYY)
+    # 美式格式
     '%m/%d/%Y %H:%M:%S',       # 10/11/2023 12:34:56
     '%m/%d/%Y %H:%M',          # 10/11/2023 12:34
     '%m/%d/%Y',                # 10/11/2023
 
-    # 欧式格式 (DD/MM/YYYY)
+    # 12小时制格式
+    '%Y-%m-%d %I:%M:%S %p',    # 2023-10-11 12:34:56 PM
+    '%Y-%m-%d %I:%M %p',       # 2023-10-11 12:34 PM
+    '%m/%d/%Y %I:%M:%S %p',    # 10/11/2023 12:34:56 PM
+    '%m/%d/%Y %I:%M %p',       # 10/11/2023 12:34 PM
+
+    # 欧式格式
     '%d/%m/%Y %H:%M:%S',       # 11/10/2023 12:34:56
     '%d/%m/%Y %H:%M',          # 11/10/2023 12:34
     '%d/%m/%Y',                # 11/10/2023
@@ -72,16 +79,16 @@ DATE_FORMATS = [
     '%Y年%m月%d日 %H:%M',       # 2023年10月11日 12:34
     '%Y年%m月%d日',             # 2023年10月11日
 
-    # 12小时制格式
-    '%Y-%m-%d %I:%M:%S %p',    # 2023-10-11 12:34:56 PM
-    '%Y-%m-%d %I:%M %p',       # 2023-10-11 12:34 PM
-    '%m/%d/%Y %I:%M:%S %p',    # 10/11/2023 12:34:56 PM
-    '%m/%d/%Y %I:%M %p',       # 10/11/2023 12:34 PM
-
     # 紧凑格式
     '%Y%m%d%H%M%S',            # 20231011123456
     '%Y%m%d%H%M',              # 202310111234
     '%Y%m%d',                  # 20231011
+]
+
+# 预编译正则表达式以提高性能
+TZ_PATTERNS = [
+    re.compile(r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+([A-Z]{3,4})$'),  # YYYY-MM-DD HH:MM:SS TZ
+    re.compile(r'^(\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2})\s+([A-Z]{3,4})$'),  # YYYY/MM/DD HH:MM:SS TZ
 ]
 
 def validate_timestamp(timestamp_str: str) -> float:
@@ -90,12 +97,14 @@ def validate_timestamp(timestamp_str: str) -> float:
         timestamp = float(timestamp_str.strip())
         # 检查是否为合理的时间戳范围（1970-2100年）
         if timestamp < 0 or timestamp > 4102444800000:  # 2100年的毫秒时间戳
-            raise ValueError("时间戳超出合理范围")
+            raise ValueError("时间戳超出合理范围 (1970-2100年)")
         return timestamp
     except ValueError as e:
-        raise ValueError(f"无效的时间戳格式: {e}")
+        if "时间戳超出合理范围" in str(e):
+            raise e
+        raise ValueError(f"无效的时间戳格式，请输入数字: {timestamp_str}")
 
-def parse_date_string(date_str: str) -> Tuple[datetime.datetime, str]:
+def parse_date_string(date_str: str) -> Tuple[datetime.datetime, Optional[str]]:
     """
     尝试解析多种日期格式
 
@@ -104,18 +113,9 @@ def parse_date_string(date_str: str) -> Tuple[datetime.datetime, str]:
     """
     date_str = date_str.strip()
 
-    # 首先尝试手动解析带时区缩写的格式
-    # 因为 Python 的 strptime 对时区缩写支持有限
-    import re
-
-    # 匹配 "YYYY-MM-DD HH:MM:SS TZ" 和 "YYYY/MM/DD HH:MM:SS TZ" 格式
-    tz_patterns = [
-        r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+([A-Z]{3,4})$',  # YYYY-MM-DD HH:MM:SS TZ
-        r'^(\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2})\s+([A-Z]{3,4})$',  # YYYY/MM/DD HH:MM:SS TZ
-    ]
-
-    for pattern in tz_patterns:
-        match = re.match(pattern, date_str)
+    # 优化：首先尝试手动解析带时区缩写的格式
+    for pattern in TZ_PATTERNS:
+        match = pattern.match(date_str)
         if match:
             date_part, tz_abbr = match.groups()
             try:
@@ -134,15 +134,25 @@ def parse_date_string(date_str: str) -> Tuple[datetime.datetime, str]:
         except ValueError:
             continue
 
-    # 最后尝试不带时区信息的格式
-    for fmt in DATE_FORMATS[4:]:  # 跳过前4个带时区的格式
+    # 最后尝试其他格式（跳过前面已处理的带时区格式）
+    for fmt in DATE_FORMATS:
+        # 跳过带时区的格式，因为已经在上面处理过了
+        if '%Z' in fmt or '%z' in fmt:
+            continue
         try:
             parsed_dt = datetime.datetime.strptime(date_str, fmt)
             return parsed_dt, None
         except ValueError:
             continue
 
-    raise ValueError(f"无法解析日期格式，支持的格式: {', '.join(DATE_FORMATS)}")
+    # 提供更友好的错误信息
+    common_formats = [
+        "2023-10-11 12:34:56",
+        "2023-10-11T12:34:56",
+        "10/11/2023 12:34:56",
+        "2023年10月11日 12:34:56"
+    ]
+    raise ValueError(f"无法解析日期格式: '{date_str}'。常用格式示例: {', '.join(common_formats)}")
 
 def detect_timezone_from_abbr(tz_abbr: str, target_timezone_str: str) -> str:
     """
@@ -155,7 +165,7 @@ def detect_timezone_from_abbr(tz_abbr: str, target_timezone_str: str) -> str:
     Returns:
         推断的时区字符串
     """
-    # 常见时区缩写映射
+    # 扩展时区缩写映射
     tz_abbr_map = {
         'CST': ['Asia/Shanghai', 'America/Chicago'],  # 中国标准时间或美国中部时间
         'PST': ['America/Los_Angeles'],
@@ -168,6 +178,11 @@ def detect_timezone_from_abbr(tz_abbr: str, target_timezone_str: str) -> str:
         'CET': ['Europe/Madrid'],
         'CEST': ['Europe/Madrid'],
         'AST': ['Asia/Riyadh'],
+        'MST': ['America/Denver'],
+        'MDT': ['America/Denver'],
+        'HST': ['Pacific/Honolulu'],
+        'AKST': ['America/Anchorage'],
+        'AKDT': ['America/Anchorage'],
     }
 
     if tz_abbr in tz_abbr_map:
@@ -193,8 +208,8 @@ def timestamp_to_date(timestamp: float, timezone_str: str) -> str:
         格式化的日期字符串
     """
     try:
-        # 将时间戳转换为UTC时间
-        utc_time = datetime.datetime.utcfromtimestamp(timestamp / 1000).replace(tzinfo=pytz.utc)
+        # 修复deprecation warning：使用新的API
+        utc_time = datetime.datetime.fromtimestamp(timestamp / 1000, tz=datetime.timezone.utc)
 
         # 获取目标时区
         target_timezone = pytz.timezone(timezone_str)
@@ -233,10 +248,10 @@ def date_to_timestamp(date_str: str, timezone_str: str) -> int:
         else:
             # 没有检测到时区信息，使用指定的目标时区
             target_time = target_timezone.localize(target_time)
-        
+
         # 转换为UTC时间戳并返回毫秒级时间戳
         timestamp = int(target_time.astimezone(pytz.utc).timestamp() * 1000)
-        
+
         return timestamp
     except Exception as e:
         raise ValueError(f"日期转换失败: {e}")
@@ -244,16 +259,16 @@ def date_to_timestamp(date_str: str, timezone_str: str) -> int:
 def get_current_time_info() -> str:
     """获取当前时间的详细信息"""
     current_timestamp = int(time.time() * 1000)
-    current_utc = datetime.datetime.utcnow().replace(tzinfo=pytz.utc)
-    
+    current_utc = datetime.datetime.now(tz=datetime.timezone.utc)
+
     info_lines = [f"当前时间戳: {current_timestamp}"]
-    
+
     # 显示各个时区的当前时间
     for tz_key, tz_info in TIME_ZONES.items():
         tz = pytz.timezone(tz_info['tz'])
         local_time = current_utc.astimezone(tz)
         info_lines.append(f"{tz_key}. {tz_info['name']}: {local_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-    
+
     return '\n'.join(info_lines)
 
 def print_timezone_help():
@@ -261,6 +276,22 @@ def print_timezone_help():
     print("可用时区:")
     for key, info in TIME_ZONES.items():
         print(f"  {key}: {info['name']}")
+
+def print_format_help():
+    """打印支持的日期格式帮助信息"""
+    print("支持的日期格式示例:")
+    examples = [
+        "标准格式: 2023-10-11 12:34:56",
+        "ISO 8601: 2023-10-11T12:34:56",
+        "带时区: 2023-10-11 12:34:56 CST",
+        "美式格式: 10/11/2023 12:34:56",
+        "欧式格式: 11/10/2023 12:34:56",
+        "中文格式: 2023年10月11日 12:34:56",
+        "12小时制: 2023-10-11 12:34:56 PM",
+        "紧凑格式: 20231011123456"
+    ]
+    for example in examples:
+        print(f"  {example}")
 
 def main():
     parser = argparse.ArgumentParser(
@@ -282,9 +313,12 @@ def main():
     
   显示时区列表:
     python time_transfer.py --list-timezones
+    
+  显示支持的日期格式:
+    python time_transfer.py --list-formats
         """
     )
-    
+
     parser.add_argument('-m', '--mode', choices=['to_date', 'to_timestamp'],
                         help='转换模式: to_date (时间戳转日期) 或 to_timestamp (日期转时间戳)')
     parser.add_argument('-v', '--value', help='要转换的时间戳或日期字符串')
@@ -294,6 +328,8 @@ def main():
                         help='显示当前各时区时间')
     parser.add_argument('--list-timezones', action='store_true',
                         help='显示所有可用时区')
+    parser.add_argument('--list-formats', action='store_true',
+                        help='显示支持的日期格式示例')
 
     args = parser.parse_args()
 
@@ -306,6 +342,10 @@ def main():
         print(get_current_time_info())
         return
 
+    if args.list_formats:
+        print_format_help()
+        return
+
     # 如果没有传入任何参数，返回当前时间戳（毫秒级）
     if not args.mode and not args.value and not args.timezone:
         print(int(time.time() * 1000), end='')
@@ -315,6 +355,7 @@ def main():
     if not args.mode or not args.value or not args.timezone:
         print('错误: 缺少必需参数', file=sys.stderr)
         print('使用 --help 查看帮助信息', file=sys.stderr)
+        print('使用 --list-formats 查看支持的日期格式', file=sys.stderr)
         sys.exit(1)
 
     # 获取时区信息
@@ -333,6 +374,8 @@ def main():
             print(converted_value, end='')
     except ValueError as e:
         print(f'错误: {e}', file=sys.stderr)
+        if '无法解析日期格式' in str(e):
+            print('提示: 使用 --list-formats 查看支持的日期格式示例', file=sys.stderr)
         sys.exit(1)
     except Exception as e:
         print(f'未知错误: {e}', file=sys.stderr)
