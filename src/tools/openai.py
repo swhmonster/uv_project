@@ -2,7 +2,7 @@ import os
 from openai import OpenAI
 
 client = OpenAI(
-    # api_key=os.getenv("8799881013535bdf4bbb1a65cca5b0be"),
+    # api_key=os.getenv("xxx"),
     api_key="xxx",
     base_url="https://xxx/api/openai/v1",
 )
